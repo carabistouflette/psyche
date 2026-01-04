@@ -1,5 +1,5 @@
 use crate as psyche_core;
-use anchor_lang::{AnchorDeserialize, AnchorSerialize, prelude::borsh};
+use anchor_lang::{prelude::borsh, AnchorDeserialize, AnchorSerialize};
 use bytemuck::Zeroable;
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Range, RangeFrom, RangeFull, RangeTo};
@@ -91,6 +91,17 @@ impl<T: Default + Copy, const N: usize> FixedVec<T, N> {
         for item in iter {
             self.push(item)?;
         }
+        Ok(())
+    }
+
+    pub fn extend_from_slice(&mut self, other: &[T]) -> Result<(), &'static str> {
+        let new_len = self.len as usize + other.len();
+        if new_len > N {
+            return Err("FixedVec is full");
+        }
+
+        self.data[self.len as usize..new_len].copy_from_slice(other);
+        self.len = new_len as u64;
         Ok(())
     }
 
@@ -424,6 +435,25 @@ mod tests {
         assert_eq!(vec[0], 1);
         assert_eq!(vec[1], 2);
         assert_eq!(vec[2], 3);
+    }
+
+    #[test]
+    fn test_extend_from_slice() {
+        let mut vec: FixedVec<u32, 6> = FixedVec::new();
+        vec.extend_from_slice(&[1, 2, 3]).unwrap();
+        assert_eq!(vec.len(), 3);
+        assert_eq!(vec[0], 1);
+        assert_eq!(vec[1], 2);
+        assert_eq!(vec[2], 3);
+
+        vec.extend_from_slice(&[4, 5]).unwrap();
+        assert_eq!(vec.len(), 5);
+        assert_eq!(vec[3], 4);
+        assert_eq!(vec[4], 5);
+
+        // Test over capacity
+        let res = vec.extend_from_slice(&[6, 7]);
+        assert_eq!(res, Err("FixedVec is full"));
     }
 
     #[test]
