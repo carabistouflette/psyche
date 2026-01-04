@@ -28,4 +28,9 @@ sha2.workspace = true
 rand = ["dep:rand"]
 
 [dev-dependencies]
-approx = "0.5.1"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+rand = { workspace = true }
+
+[[bench]]
+name = "similarity_bench"
+harness = false

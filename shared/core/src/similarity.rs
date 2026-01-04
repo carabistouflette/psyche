@@ -28,16 +28,36 @@ pub fn is_similar(
 }
 
 pub fn jaccard_distance(a: &[f32], b: &[f32]) -> f32 {
-    let mut intersection = 0;
-    let mut union = a.len();
+    let mut a_sorted: Vec<u32> = a
+        .iter()
+        .map(|f| if *f == 0.0 { 0 } else { f.to_bits() })
+        .collect();
+    a_sorted.sort_unstable();
+    a_sorted.dedup();
 
-    for &val in b {
-        if a.contains(&val) {
-            intersection += 1;
+    let mut b_sorted: Vec<u32> = b
+        .iter()
+        .map(|f| if *f == 0.0 { 0 } else { f.to_bits() })
+        .collect();
+    b_sorted.sort_unstable();
+    b_sorted.dedup();
+
+    let mut i = 0;
+    let mut j = 0;
+    let mut intersection = 0;
+    while i < a_sorted.len() && j < b_sorted.len() {
+        if a_sorted[i] < b_sorted[j] {
+            i += 1;
+        } else if a_sorted[i] > b_sorted[j] {
+            j += 1;
         } else {
-            union += 1;
+            intersection += 1;
+            i += 1;
+            j += 1;
         }
     }
+
+    let union = a_sorted.len() + b_sorted.len() - intersection;
 
     if union == 0 {
         return 0.0;
