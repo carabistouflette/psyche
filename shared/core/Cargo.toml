@@ -54,3 +54,7 @@ harness = false
 [[bench]]
 name = "bloom_bench"
 harness = false
+
+[[bench]]
+name = "shuffling_bench"
+harness = false

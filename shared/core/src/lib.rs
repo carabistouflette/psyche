@@ -47,11 +47,11 @@ pub use serde_utils::{
 };
 pub use sha256::{sha256, sha256v};
 pub use similarity::{
-    DistanceThresholds, hamming_distance, is_similar, jaccard_distance, manhattan_distance,
+    hamming_distance, is_similar, jaccard_distance, manhattan_distance, DistanceThresholds,
 };
 pub use sized_iterator::SizedIterator;
 pub use small_boolean::SmallBoolean;
-pub use swap_or_not::compute_shuffled_index;
+pub use swap_or_not::{compute_shuffled_index, ShuffleState};
 pub use token_size::TokenSize;
 
 #[cfg(test)]

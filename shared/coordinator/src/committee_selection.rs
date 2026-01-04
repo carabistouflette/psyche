@@ -1,8 +1,10 @@
 use crate::{Client, Coordinator, CoordinatorError, SOLANA_MAX_NUM_WITNESSES};
 
-use anchor_lang::{AnchorDeserialize, AnchorSerialize, InitSpace, prelude::borsh};
+use anchor_lang::{prelude::borsh, AnchorDeserialize, AnchorSerialize, InitSpace};
 use bytemuck::Zeroable;
-use psyche_core::{NodeIdentity, SmallBoolean, compute_shuffled_index, sha256, sha256v};
+use psyche_core::{
+    compute_shuffled_index, sha256, sha256v, NodeIdentity, ShuffleState, SmallBoolean,
+};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -36,6 +38,8 @@ pub struct CommitteeSelection {
     total_nodes: u64,
     witness_nodes: u64,
     seed: [u8; 32],
+    committee_shuffle: ShuffleState,
+    witness_shuffle: ShuffleState,
 }
 
 #[derive(
@@ -108,14 +112,24 @@ impl CommitteeSelection {
         let free_nodes = total_nodes - tie_breaker_nodes;
         let verifier_nodes = (free_nodes * verification_percent as usize) / 100;
 
-        let seed = sha256(&seed.to_le_bytes());
+        let seed_bytes = sha256(&seed.to_le_bytes());
+
+        let mut committee_seed = [0u8; 32];
+        committee_seed.copy_from_slice(&sha256v(&[&seed_bytes, COMMITTEE_SALT.as_bytes()]));
+        let committee_shuffle = ShuffleState::new(total_nodes as u64, committee_seed);
+
+        let mut witness_seed = [0u8; 32];
+        witness_seed.copy_from_slice(&sha256v(&[&seed_bytes, WITNESS_SALT.as_bytes()]));
+        let witness_shuffle = ShuffleState::new(total_nodes as u64, witness_seed);
 
         Ok(Self {
             tie_breaker_nodes: tie_breaker_nodes as u64,
             verifier_nodes: verifier_nodes as u64,
             total_nodes: total_nodes as u64,
             witness_nodes: witness_nodes as u64,
-            seed,
+            seed: seed_bytes,
+            committee_shuffle,
+            witness_shuffle,
         })
     }
 
@@ -212,10 +226,15 @@ impl CommitteeSelection {
     }
 
     fn compute_shuffled_index(&self, index: u64, salt: &str) -> u64 {
-        let mut seed = [0u8; 32];
-        seed.copy_from_slice(&sha256v(&[&self.seed, salt.as_bytes()]));
-
-        compute_shuffled_index(index, self.total_nodes, &seed)
+        match salt {
+            COMMITTEE_SALT => self.committee_shuffle.shuffle(index),
+            WITNESS_SALT => self.witness_shuffle.shuffle(index),
+            _ => {
+                let mut seed = [0u8; 32];
+                seed.copy_from_slice(&sha256v(&[&self.seed, salt.as_bytes()]));
+                ShuffleState::new(self.total_nodes, seed).shuffle(index)
+            }
+        }
     }
 
     pub fn get_seed(&self) -> [u8; 32] {
