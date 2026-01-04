@@ -7,8 +7,8 @@ use clap::{ArgAction, Parser};
 use psyche_centralized_shared::ClientId;
 use psyche_coordinator::Coordinator;
 use psyche_tui::{
-    LogOutput, ServiceInfo,
     logging::{MetricsDestination, OpenTelemetry, RemoteLogsDestination, TraceDestination},
+    LogOutput, ServiceInfo,
 };
 use std::{
     path::{Path, PathBuf},
@@ -110,11 +110,18 @@ fn load_config_state(
     state_path: PathBuf,
     data_config_path: Option<PathBuf>,
 ) -> Result<(Coordinator<ClientId>, Option<DataServerInfo>)> {
-    let coordinator: Coordinator<ClientId> = toml::from_str(std::str::from_utf8(
-        &std::fs::read(&state_path).with_context(|| {
-            format!("failed to read coordinator state toml file {state_path:?}")
-        })?,
-    )?)?;
+    let coordinator: Coordinator<ClientId> =
+        if state_path.extension().and_then(|s| s.to_str()) == Some("bin") {
+            bincode::deserialize(&std::fs::read(&state_path).with_context(|| {
+                format!("failed to read coordinator state binary file {state_path:?}")
+            })?)?
+        } else {
+            toml::from_str(std::str::from_utf8(
+                &std::fs::read(&state_path).with_context(|| {
+                    format!("failed to read coordinator state toml file {state_path:?}")
+                })?,
+            )?)?
+        };
 
     let data_server_config = match data_config_path {
         Some(config_path) => {
