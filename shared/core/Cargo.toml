@@ -32,6 +32,7 @@ approx = "0.5.1"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 tokio = { version = "1.43.0", features = ["full"] }
 tempfile = "3"
+rand = { workspace = true }
 
 [[bench]]
 name = "merkle_bench"
@@ -45,9 +46,10 @@ harness = false
 name = "similarity_bench"
 harness = false
 
-[dev-dependencies.rand]
-workspace = true
-
 [[bench]]
 name = "fixed_vec_bench"
+harness = false
+
+[[bench]]
+name = "bloom_bench"
 harness = false

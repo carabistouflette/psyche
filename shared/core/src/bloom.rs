@@ -293,22 +293,49 @@ impl<const U: usize, const K: usize> Bloom<U, K> {
     }
 
     pub fn add<T: BloomHashIndex>(&mut self, key: &T) {
-        for k in &self.keys {
-            let pos = self.pos(key, *k) as usize;
-            if !*self.bits.0.get(pos).unwrap() {
-                self.bits.0.set(pos, true);
+        if K < 2 {
+            for k in &self.keys {
+                let pos = self.pos(key, *k) as usize;
+                if !*self.bits.0.get(pos).unwrap() {
+                    self.bits.0.set(pos, true);
+                }
+            }
+        } else {
+            let h1 = key.hash_at_index(self.keys[0]);
+            let h2 = key.hash_at_index(self.keys[1]);
+            let len = self.bits.0.len() as u64;
+
+            for i in 0..K {
+                let pos = (h1.wrapping_add((i as u64).wrapping_mul(h2))) % len;
+                if !*self.bits.0.get(pos as usize).unwrap() {
+                    self.bits.0.set(pos as usize, true);
+                }
             }
         }
     }
 
     pub fn contains<T: BloomHashIndex>(&self, key: &T) -> bool {
-        for k in &self.keys {
-            let pos = self.pos(key, *k) as usize;
-            if !*self.bits.0.get(pos).unwrap() {
-                return false;
+        if K < 2 {
+            for k in &self.keys {
+                let pos = self.pos(key, *k) as usize;
+                if !*self.bits.0.get(pos).unwrap() {
+                    return false;
+                }
             }
+            true
+        } else {
+            let h1 = key.hash_at_index(self.keys[0]);
+            let h2 = key.hash_at_index(self.keys[1]);
+            let len = self.bits.0.len() as u64;
+
+            for i in 0..K {
+                let pos = (h1.wrapping_add((i as u64).wrapping_mul(h2))) % len;
+                if !*self.bits.0.get(pos as usize).unwrap() {
+                    return false;
+                }
+            }
+            true
         }
-        true
     }
 }
 
