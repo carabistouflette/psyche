@@ -28,4 +28,8 @@ sha2.workspace = true
 rand = ["dep:rand"]
 
 [dev-dependencies]
-approx = "0.5.1"
+tokio = { version = "1.43.0", features = ["full"] }
+
+[[bench]]
+name = "blocking_io_bench"
+harness = false
