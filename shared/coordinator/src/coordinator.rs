@@ -1,12 +1,13 @@
 use crate::{
-    Commitment, Committee, CommitteeProof, CommitteeSelection, WitnessProof,
     model::{Checkpoint, HubRepo, Model},
+    Commitment, Committee, CommitteeProof, CommitteeSelection, WitnessProof,
 };
 
-use anchor_lang::{AnchorDeserialize, AnchorSerialize, InitSpace, prelude::borsh};
+use anchor_lang::{prelude::borsh, AnchorDeserialize, AnchorSerialize, InitSpace};
 use bytemuck::{Pod, Zeroable};
-use psyche_core::{Bloom, FixedString, FixedVec, MerkleRoot, NodeIdentity, SmallBoolean, sha256};
+use psyche_core::{sha256, Bloom, FixedString, FixedVec, MerkleRoot, NodeIdentity, SmallBoolean};
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, Bytes};
 use std::{collections::HashSet, hash::Hash};
 use ts_rs::TS;
 
@@ -16,6 +17,7 @@ pub const SOLANA_MAX_NUM_CLIENTS: usize = 256;
 pub const SOLANA_MAX_NUM_WITNESSES: usize = 32;
 // run_id must be at most 32 bytes because of PDA constraints
 pub const SOLANA_RUN_ID_MAX_LEN: usize = 32;
+pub const MAX_MODEL_SIZE: usize = 2048;
 
 pub const BLOOM_FALSE_RATE: f64 = 0.01f64;
 pub const WITNESS_QUORUM_RAIO: f64 = 2.0f64 / 3.0f64;
@@ -92,7 +94,7 @@ pub enum ClientState {
 #[repr(C)]
 pub struct Client<I> {
     pub id: I,
-    pub state: ClientState,
+    pub state: u8,
     pub exited_height: u32,
 }
 
@@ -260,7 +262,7 @@ pub struct CoordinatorConfig {
 }
 
 #[derive(
-    Clone, Debug, Zeroable, Copy, Serialize, Deserialize, AnchorSerialize, AnchorDeserialize, TS,
+    Clone, Debug, Zeroable, Copy, Serialize, Deserialize, AnchorDeserialize, AnchorSerialize, TS,
 )]
 #[repr(C)]
 #[serde(bound = "T: NodeIdentity")]
@@ -283,7 +285,7 @@ pub struct CoordinatorEpochState<T> {
 }
 
 #[derive(
-    Clone, Debug, Zeroable, Copy, Serialize, Deserialize, AnchorSerialize, AnchorDeserialize, TS,
+    Clone, Debug, Zeroable, Copy, Serialize, Deserialize, AnchorDeserialize, AnchorSerialize, TS,
 )]
 #[repr(C)]
 pub struct CoordinatorProgress {
@@ -292,17 +294,20 @@ pub struct CoordinatorProgress {
     pub epoch_start_data_index: u64,
 }
 
+#[serde_as]
 #[derive(
-    Clone, Debug, Zeroable, Copy, Serialize, Deserialize, AnchorSerialize, AnchorDeserialize, TS,
+    Clone, Debug, Zeroable, Copy, Serialize, Deserialize, AnchorDeserialize, AnchorSerialize, TS,
 )]
 #[serde(bound = "T: NodeIdentity")]
 #[repr(C)]
 pub struct Coordinator<T> {
     pub run_id: FixedString<{ SOLANA_RUN_ID_MAX_LEN }>,
 
-    pub run_state: RunState,
+    pub run_state: u8,
 
-    pub model: Model,
+    #[serde_as(as = "Bytes")]
+    #[ts(type = "number[]")]
+    pub model: [u8; MAX_MODEL_SIZE],
 
     pub config: CoordinatorConfig,
 
@@ -433,20 +438,44 @@ impl<T: NodeIdentity> Client<T> {
     pub fn new(id: T) -> Self {
         Self {
             id,
-            state: ClientState::Healthy,
+            state: ClientState::Healthy as u8,
             exited_height: 0,
         }
     }
 }
 
 impl<T: NodeIdentity> Coordinator<T> {
+    pub fn get_run_state(&self) -> Result<RunState, CoordinatorError> {
+        RunState::try_from(self.run_state as usize)
+    }
+
+    pub fn set_run_state(&mut self, state: RunState) {
+        self.run_state = usize::from(state) as u8;
+    }
+
+    pub fn get_model(&self) -> Result<Model, CoordinatorError> {
+        Model::try_from_slice(&self.model).map_err(|_| CoordinatorError::InvalidRunState)
+        // TODO: better error
+    }
+
+    pub fn set_model(&mut self, model: Model) -> Result<(), CoordinatorError> {
+        let data = model
+            .try_to_vec()
+            .map_err(|_| CoordinatorError::InvalidRunState)?;
+        if data.len() > MAX_MODEL_SIZE {
+            return Err(CoordinatorError::InvalidRunState);
+        }
+        self.model[..data.len()].copy_from_slice(&data);
+        Ok(())
+    }
+
     pub fn tick<'a, 'b>(
         &'a mut self,
         new_clients: Option<impl ExactSizeIterator<Item = &'b T>>,
         unix_timestamp: u64,
         random_seed: u64,
     ) -> std::result::Result<TickResult, CoordinatorError> {
-        match self.run_state {
+        match self.get_run_state()? {
             RunState::Uninitialized | RunState::Finished | RunState::Paused => {
                 Err(CoordinatorError::Halted)
             }
@@ -472,11 +501,11 @@ impl<T: NodeIdentity> Coordinator<T> {
         }
 
         // If we received a warmup witness but we already transitioned to the next state, we just ignore it.
-        if matches!(self.run_state, RunState::RoundTrain) {
+        if matches!(self.get_run_state()?, RunState::RoundTrain) {
             return Ok(());
         }
 
-        if !matches!(self.run_state, RunState::Warmup) {
+        if !matches!(self.get_run_state()?, RunState::Warmup) {
             return Err(CoordinatorError::InvalidRunState);
         }
 
@@ -524,7 +553,7 @@ impl<T: NodeIdentity> Coordinator<T> {
         };
 
         if !matches!(
-            self.run_state,
+            self.get_run_state()?,
             RunState::RoundWitness | RunState::RoundTrain,
         ) {
             return Err(CoordinatorError::InvalidRunState);
@@ -551,7 +580,9 @@ impl<T: NodeIdentity> Coordinator<T> {
             .push(witness)
             .map_err(|_| CoordinatorError::WitnessesFull)?;
 
-        if round.witnesses.len() == witness_nodes && !(self.run_state == RunState::RoundWitness) {
+        if round.witnesses.len() == witness_nodes
+            && !(self.get_run_state()? == RunState::RoundWitness)
+        {
             self.change_state(unix_timestamp, RunState::RoundWitness);
         }
         Ok(())
@@ -583,8 +614,8 @@ impl<T: NodeIdentity> Coordinator<T> {
         for (_id, proof) in &checks {
             let index = proof.index as usize;
             let client = &mut self.epoch_state.clients[index];
-            if client.state == ClientState::Healthy {
-                client.state = ClientState::Dropped;
+            if client.state == ClientState::Healthy as u8 {
+                client.state = ClientState::Dropped as u8;
                 dropped += 1;
             }
         }
@@ -605,13 +636,17 @@ impl<T: NodeIdentity> Coordinator<T> {
         // TODO: In the case of more than one checkpointer, this will overwrite the hub repo
         // with the last checkpointed one. We could instead have a vector of hub repos to have
         // more download options.
-        match &mut self.model {
+        // with the last checkpointed one. We could instead have a vector of hub repos to have
+        // more download options.
+        let mut model = self.get_model()?;
+        match &mut model {
             Model::LLM(llm) => match llm.checkpoint {
                 Checkpoint::P2P(_) => llm.checkpoint = Checkpoint::P2P(hub_repo),
                 Checkpoint::Hub(_) => llm.checkpoint = Checkpoint::Hub(hub_repo),
                 _ => {}
             },
         }
+        self.set_model(model)?;
         Ok(())
     }
 
@@ -619,8 +654,8 @@ impl<T: NodeIdentity> Coordinator<T> {
         let index = index as usize;
         if index < self.epoch_state.clients.len() {
             let client = &mut self.epoch_state.clients[index];
-            if client.state == ClientState::Healthy {
-                client.state = ClientState::Withdrawn;
+            if client.state == ClientState::Healthy as u8 {
+                client.state = ClientState::Withdrawn as u8;
                 return Ok(());
             }
         }
@@ -653,7 +688,7 @@ impl<T: NodeIdentity> Coordinator<T> {
     }
 
     pub fn resume(&mut self, unix_timestamp: u64) -> Result<(), CoordinatorError> {
-        if self.run_state != RunState::Paused {
+        if self.get_run_state()? != RunState::Paused {
             return Err(CoordinatorError::CannotResume);
         }
         self.start_waiting_for_members(unix_timestamp);
@@ -800,8 +835,11 @@ impl<T: NodeIdentity> Coordinator<T> {
     }
 
     pub fn active(&self) -> bool {
+        let Ok(state) = self.get_run_state() else {
+            return false;
+        };
         !matches!(
-            self.run_state,
+            state,
             RunState::WaitingForMembers
                 | RunState::Warmup
                 | RunState::Uninitialized
@@ -811,8 +849,11 @@ impl<T: NodeIdentity> Coordinator<T> {
     }
 
     pub fn halted(&self) -> bool {
+        let Ok(state) = self.get_run_state() else {
+            return true;
+        };
         matches!(
-            self.run_state,
+            state,
             RunState::Uninitialized | RunState::Finished | RunState::Paused
         )
     }
@@ -839,8 +880,9 @@ impl<T: NodeIdentity> Coordinator<T> {
     }
 
     pub fn get_sequence_length(&self) -> u32 {
-        match &self.model {
-            Model::LLM(llm) => llm.max_seq_len,
+        match self.get_model() {
+            Ok(Model::LLM(llm)) => llm.max_seq_len,
+            _ => 2048, // Default or error? Should not fail if initialized.
         }
     }
 
@@ -859,7 +901,9 @@ impl<T: NodeIdentity> Coordinator<T> {
     }
 
     pub fn get_cold_start_warmup_bounds(&self) -> Option<(u32, u32)> {
-        let Model::LLM(llm) = &self.model;
+        let Ok(Model::LLM(llm)) = self.get_model() else {
+            return None;
+        };
         let cold_start_warmup_steps = llm.cold_start_warmup_steps;
         if self.epoch_state.cold_start_epoch.is_false() || cold_start_warmup_steps == 0 {
             return None;
@@ -911,10 +955,12 @@ impl<T: NodeIdentity> Coordinator<T> {
                 .iter()
                 .any(|client| pending_clients_unordered.contains(&client.id));
             if all_prev_clients_disconnected {
-                let Model::LLM(llm) = &mut self.model;
+                let mut model = self.get_model()?;
+                let Model::LLM(llm) = &mut model;
                 if let Checkpoint::P2P(hub_repo) = llm.checkpoint {
                     llm.checkpoint = Checkpoint::Hub(hub_repo);
                 }
+                self.set_model(model)?;
             }
 
             let cold_start_epoch = self.epoch_state.cold_start_epoch;
@@ -1040,13 +1086,15 @@ impl<T: NodeIdentity> Coordinator<T> {
             self.move_clients_to_exited(height);
 
             // we've completed an epoch, switch to P2P from now on
-            let Model::LLM(llm) = &mut self.model;
+            let mut model = self.get_model()?;
+            let Model::LLM(llm) = &mut model;
             match llm.checkpoint {
                 Checkpoint::Hub(hub_repo) | Checkpoint::Dummy(hub_repo) => {
                     llm.checkpoint = Checkpoint::P2P(hub_repo)
                 }
                 _ => {}
             }
+            self.set_model(model)?;
 
             if self.pending_pause.is_true() {
                 self.withdraw_all()?;
@@ -1123,15 +1171,15 @@ impl<T: NodeIdentity> Coordinator<T> {
     }
 
     fn change_state(&mut self, unix_timestamp: u64, new_state: RunState) {
-        assert!(self.run_state != new_state);
+        assert!(self.run_state != usize::from(new_state) as u8);
         self.run_state_start_unix_timestamp = unix_timestamp;
-        self.run_state = new_state;
+        self.set_run_state(new_state);
     }
 
     fn move_clients_to_exited(&mut self, height: u32) {
         // WARNING: O(n) on number of clients, need to refactor
         self.epoch_state.clients.retain(|x| {
-            if x.state != ClientState::Healthy {
+            if x.state != ClientState::Healthy as u8 {
                 self.epoch_state.exited_clients.push(*x).unwrap();
                 self.epoch_state
                     .exited_clients
@@ -1146,11 +1194,13 @@ impl<T: NodeIdentity> Coordinator<T> {
     }
 
     pub fn is_warmup_just_starting(&self) -> bool {
-        self.epoch_state.first_round.is_true() && self.run_state == RunState::Warmup
+        self.epoch_state.first_round.is_true()
+            && self.get_run_state().ok() == Some(RunState::Warmup)
     }
 
     pub fn is_training_just_starting(&self) -> bool {
-        self.epoch_state.first_round.is_true() && self.run_state == RunState::RoundTrain
+        self.epoch_state.first_round.is_true()
+            && self.get_run_state().ok() == Some(RunState::RoundTrain)
     }
 }
 

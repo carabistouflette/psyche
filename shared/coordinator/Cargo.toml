@@ -12,3 +12,11 @@ serde_with.workspace = true
 serde.workspace = true
 cfg_eval = "0.1.2"
 ts-rs.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+rand = { workspace = true }
+
+[[bench]]
+name = "consensus_bench"
+harness = false

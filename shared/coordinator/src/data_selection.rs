@@ -1,6 +1,6 @@
 use crate::{Committee, CommitteeSelection, Coordinator, Round};
 
-use psyche_core::{BatchId, ClosedInterval, NodeIdentity, deterministic_shuffle};
+use psyche_core::{deterministic_shuffle, BatchId, ClosedInterval, NodeIdentity};
 use std::{collections::BTreeMap, fmt};
 
 /// Assigns data batches to nodes based on committee roles.  
@@ -195,7 +195,7 @@ mod tests {
         let clients: Vec<_> = (0..num_nodes)
             .map(|i| Client {
                 id: TestNode(i as u64),
-                state: ClientState::Healthy,
+                state: ClientState::Healthy as u8,
                 exited_height: 0,
             })
             .collect();
