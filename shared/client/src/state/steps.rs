@@ -1,11 +1,11 @@
 use crate::{
-    Broadcast, BroadcastType, ClientTUIState, IntegrationTestLogMarker,
     state::{train::FinishedTrainers, types::DeserializeError},
+    Broadcast, BroadcastType, ClientTUIState, IntegrationTestLogMarker,
 };
 
 use iroh_blobs::api::Tag;
 use psyche_coordinator::{Committee, Coordinator, RunState, Witness, WitnessProof};
-use psyche_core::{MerkleRoot, MerkleTree, NodeIdentity, sha256};
+use psyche_core::{sha256, MerkleRoot, MerkleTree, NodeIdentity};
 use psyche_modeling::{DistroResult, Trainer};
 use psyche_network::{
     AuthenticatableIdentity, BlobTicket, Hash, P2PEndpointInfo, TransmittableDistroResult,
@@ -22,10 +22,9 @@ use tokio::{
     sync::mpsc::{self},
     task::JoinHandle,
 };
-use tracing::{Instrument, debug, error, info, trace, trace_span, warn};
+use tracing::{debug, error, info, trace, trace_span, warn, Instrument};
 
 use super::{
-    FinishedBroadcast, RunInitConfigAndIO,
     cooldown::{CooldownError, CooldownStep, CooldownStepMetadata},
     evals::EvalError,
     init::InitRunError,
@@ -35,6 +34,7 @@ use super::{
     types::PayloadState,
     warmup::{WarmupStep, WarmupStepMetadata},
     witness::{WitnessStep, WitnessStepMetadata, WitnessingError},
+    FinishedBroadcast, RunInitConfigAndIO,
 };
 
 pub struct StepStateMachine<T: NodeIdentity, A: AuthenticatableIdentity + 'static> {
@@ -259,7 +259,7 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> StepStateMachine<T, 
                     }
                 }
             }
-        } else if self.coordinator_state.run_state == RunState::Warmup {
+        } else if self.coordinator_state.get_run_state().ok() == Some(RunState::Warmup) {
             if !self.sent_warmup_finished {
                 let merkle = MerkleTree::new(&self.current_round.broadcasts)
                     .get_root()
@@ -560,13 +560,15 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> StepStateMachine<T, 
         if let Some(self_result) = self_result {
             trace!(
                 "Processing our own distro result for batch {} in step {} with hash {hash}",
-                distro_result.batch_id, distro_result.step
+                distro_result.batch_id,
+                distro_result.step
             );
             round_state.self_distro_results.push(self_result);
         } else {
             trace!(
                 "Finished download of distro result for batch {} in step {} with hash {hash}",
-                distro_result.batch_id, distro_result.step
+                distro_result.batch_id,
+                distro_result.step
             );
         }
 
@@ -592,14 +594,14 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> StepStateMachine<T, 
 
         let Some(commitment) = commitments_for_batch
             .iter()
-            .find(|comm| comm.0 == from && comm.1.1.ticket.hash() == hash)
+            .find(|comm| comm.0 == from && comm.1 .1.ticket.hash() == hash)
         else {
             info!("No commitment for payload from {}", from);
             return;
         };
 
         // TODO: verify shape of distro_results
-        let commitment = commitment.1.0;
+        let commitment = commitment.1 .0;
         let batch_ids_not_yet_trained_on = round_state.batch_ids_not_yet_trained_on.clone();
         let blooms = round_state.blooms.clone();
         let downloads = round_state.downloads.clone();
@@ -644,7 +646,8 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> StepStateMachine<T, 
                     remaining_batch_ids.remove(&batch_id);
                     trace!(
                         "Remaining batches to download for step {}: {:?}",
-                        distro_result.step, remaining_batch_ids
+                        distro_result.step,
+                        remaining_batch_ids
                     );
                     remaining_batch_ids.is_empty()
                 } else {
@@ -758,7 +761,10 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> StepStateMachine<T, 
             }
         };
 
-        let new_step: ActiveStep = match (std::mem::take(&mut self.active_step), state.run_state) {
+        let new_step: ActiveStep = match (
+            std::mem::take(&mut self.active_step),
+            state.get_run_state().unwrap_or(RunState::Uninitialized),
+        ) {
             // start training at the beginning of an epoch
             (ActiveStep::Warmup(warmup), RunState::RoundTrain) => {
                 let trainers = warmup.finish().stop_evals().await?;
@@ -1018,7 +1024,7 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> RunManager<T, A> {
             InitStage::NotYetInitialized(init_info @ Some(..))
             // We run the initialization only when we are sure that we didn't just recently joined in Warmup
             // If this is the case, then our ID won't be present in the list of clients available for this epoch
-                if state.run_state == RunState::Warmup && state.epoch_state.clients.iter().any(|c| c.id == init_info.as_ref().unwrap().init_config.identity) =>
+                if state.get_run_state().ok() == Some(RunState::Warmup) && state.epoch_state.clients.iter().any(|c| c.id == init_info.as_ref().unwrap().init_config.identity) =>
             {
                 // Take ownership of init_info using std::mem::take
                 let init_info = init_info.take().unwrap();
@@ -1031,8 +1037,8 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> RunManager<T, A> {
                 unreachable!("Once we take the init state, we move to initializing.");
             }
             InitStage::Initializing(..)
-                if state.run_state == RunState::WaitingForMembers
-                    || state.run_state == RunState::Paused =>
+                if state.get_run_state().ok() == Some(RunState::WaitingForMembers)
+                    || state.get_run_state().ok() == Some(RunState::Paused) =>
             {
                 // a client has left the network, transitioning back to RunState::WaitingForMembers.
                 // wait for new clients to join the network.

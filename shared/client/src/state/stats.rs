@@ -1,6 +1,4 @@
-use psyche_coordinator::{
-    Coordinator, MAX_TOKENS_TO_SEND, WitnessEvalResult, WitnessMetadata, model,
-};
+use psyche_coordinator::{Coordinator, WitnessEvalResult, WitnessMetadata, MAX_TOKENS_TO_SEND};
 use psyche_core::{BoundedQueue, FixedVec, LearningRateSchedule, NodeIdentity};
 use psyche_metrics::ClientMetrics;
 use psyche_modeling::Trainer;
@@ -252,22 +250,21 @@ impl StatsLogger {
     pub fn global_tokens_per_second<T: NodeIdentity>(&self, state: &Coordinator<T>) -> f32 {
         match self.step_durations.is_empty() {
             true => 0.,
-            false => match &state.model {
-                model::Model::LLM(_) => {
-                    let tokens = state.get_target_global_batch_size(state.current_round()) as u32
-                        * state.get_sequence_length()
-                        * self.step_durations.len() as u32;
-                    let seconds = self
-                        .step_durations
-                        .iter()
-                        .fold(0f32, |acc, ele| acc + ele.as_secs_f32());
-                    if seconds == 0.0 {
-                        0.0
-                    } else {
-                        tokens as f32 / seconds
-                    }
+            false => {
+                let seq_len = state.get_sequence_length();
+                let tokens = state.get_target_global_batch_size(state.current_round()) as u32
+                    * seq_len
+                    * self.step_durations.len() as u32;
+                let seconds = self
+                    .step_durations
+                    .iter()
+                    .fold(0f32, |acc, ele| acc + ele.as_secs_f32());
+                if seconds == 0.0 {
+                    0.0
+                } else {
+                    tokens as f32 / seconds
                 }
-            },
+            }
         }
     }
 
@@ -356,9 +353,7 @@ fn total_tokens<T: NodeIdentity>(state: &Coordinator<T>) -> u64 {
         .current_round()
         .map(|y| y.data_index)
         .unwrap_or_default()
-        * match &state.model {
-            model::Model::LLM(llm) => llm.max_seq_len as u64,
-        }
+        * state.get_sequence_length() as u64
 }
 
 fn perplexity(loss: f32) -> f32 {
@@ -366,7 +361,11 @@ fn perplexity(loss: f32) -> f32 {
 }
 
 fn no_nan(val: f32, replacement: f32) -> f32 {
-    if val.is_nan() { replacement } else { val }
+    if val.is_nan() {
+        replacement
+    } else {
+        val
+    }
 }
 
 fn token_batch_size<T: NodeIdentity>(state: &Coordinator<T>) -> u32 {

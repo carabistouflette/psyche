@@ -1,27 +1,28 @@
-use crate::{IntegrationTestLogMarker, WandBInfo, fetch_data::DataFetcher};
+use crate::{fetch_data::DataFetcher, IntegrationTestLogMarker, WandBInfo};
 use psyche_coordinator::{
-    Coordinator, HealthChecks,
     model::{self, HttpLLMTrainingDataLocation, LLMTrainingDataLocation},
+    Coordinator, HealthChecks,
 };
 use psyche_core::{Barrier, CancellableBarrier, NodeIdentity, Shuffle, TokenSize};
 use psyche_data_provider::{
-    DataProvider, DataProviderTcpClient, DummyDataProvider, PreprocessedDataProvider, Split,
-    WeightedDataProvider, download_dataset_repo_async, download_model_repo_async,
+    download_dataset_repo_async, download_model_repo_async,
     http::{FileURLs, HttpDataProvider},
+    DataProvider, DataProviderTcpClient, DummyDataProvider, PreprocessedDataProvider, Split,
+    WeightedDataProvider,
 };
 use psyche_metrics::ClientMetrics;
 use psyche_modeling::{
-    AttentionImplementation, AutoConfig, AutoTokenizerError, CausalLM, CommunicatorId,
-    DataParallel, DeepseekForCausalLM, Devices, DummyModel, LlamaConfig, LlamaForCausalLM,
-    LocalTrainer, ModelConfig, ModelLoadError, ParallelModels, PretrainedSource, Trainer,
-    auto_tokenizer,
+    auto_tokenizer, AttentionImplementation, AutoConfig, AutoTokenizerError, CausalLM,
+    CommunicatorId, DataParallel, DeepseekForCausalLM, Devices, DummyModel, LlamaConfig,
+    LlamaForCausalLM, LocalTrainer, ModelConfig, ModelLoadError, ParallelModels, PretrainedSource,
+    Trainer,
 };
 use psyche_network::{AuthenticatableIdentity, BlobTicket};
 use psyche_watcher::OpportunisticData;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tch::{Kind, Tensor};
 use thiserror::Error;
-use tokenizers::{ModelWrapper, Tokenizer, models::wordlevel::WordLevel};
+use tokenizers::{models::wordlevel::WordLevel, ModelWrapper, Tokenizer};
 use tokio::{
     io,
     sync::{mpsc::UnboundedSender, oneshot},
@@ -30,9 +31,9 @@ use tokio::{
 use tracing::{debug, error, info};
 
 use super::{
-    CheckpointConfig, FinishedBroadcast, cooldown::CooldownStepMetadata, evals::ModelTaskRunner,
-    stats::StatsLogger, steps::StepStateMachine, train::TrainingStepMetadata,
-    types::DistroBroadcastAndPayload, warmup::WarmupStepMetadata, witness::WitnessStepMetadata,
+    cooldown::CooldownStepMetadata, evals::ModelTaskRunner, stats::StatsLogger,
+    steps::StepStateMachine, train::TrainingStepMetadata, types::DistroBroadcastAndPayload,
+    warmup::WarmupStepMetadata, witness::WitnessStepMetadata, CheckpointConfig, FinishedBroadcast,
 };
 use iroh_blobs::api::Tag;
 
@@ -192,7 +193,7 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> RunInitConfigAndIO<T
             ));
         }
 
-        let model::Model::LLM(llm) = state.model;
+        let model::Model::LLM(llm) = state.get_model().map_err(|_| InitRunError::NoModel)?;
 
         let hub_read_token = init_config.hub_read_token.clone();
         let hub_max_concurrent_downloads = init_config.hub_max_concurrent_downloads;
@@ -761,35 +762,31 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> RunInitConfigAndIO<T
             }
             #[cfg(feature = "python")]
             RawLoadedModelType::Python(model) => {
-                vec![
-                    psyche_modeling::LocalTrainer::new(
-                        ParallelModels {
-                            models: vec![Box::new(model) as Box<dyn CausalLM>],
-                            barrier: Arc::new(psyche_modeling::NopBarrier) as Arc<dyn Barrier>,
-                            data_parallel: None,
-                        },
-                        llm.lr_schedule,
-                        llm.optimizer,
-                        init_config.micro_batch_size,
-                        init_config.optim_stats_every_n_steps,
-                        init_config.grad_accum_in_fp32,
-                    )
-                    .into(),
-                ]
+                vec![psyche_modeling::LocalTrainer::new(
+                    ParallelModels {
+                        models: vec![Box::new(model) as Box<dyn CausalLM>],
+                        barrier: Arc::new(psyche_modeling::NopBarrier) as Arc<dyn Barrier>,
+                        data_parallel: None,
+                    },
+                    llm.lr_schedule,
+                    llm.optimizer,
+                    init_config.micro_batch_size,
+                    init_config.optim_stats_every_n_steps,
+                    init_config.grad_accum_in_fp32,
+                )
+                .into()]
             }
             #[cfg(feature = "python")]
             RawLoadedModelType::PythonDistributed(model) => {
-                vec![
-                    psyche_modeling::PythonDistributedTrainer::new(
-                        model,
-                        llm.lr_schedule,
-                        llm.optimizer,
-                        init_config.micro_batch_size,
-                        init_config.optim_stats_every_n_steps,
-                        init_config.grad_accum_in_fp32,
-                    )?
-                    .into(),
-                ]
+                vec![psyche_modeling::PythonDistributedTrainer::new(
+                    model,
+                    llm.lr_schedule,
+                    llm.optimizer,
+                    init_config.micro_batch_size,
+                    init_config.optim_stats_every_n_steps,
+                    init_config.grad_accum_in_fp32,
+                )?
+                .into()]
             }
         };
 

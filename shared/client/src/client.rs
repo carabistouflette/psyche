@@ -1,26 +1,26 @@
 use crate::{
-    Broadcast, BroadcastType, ClientTUIState, Finished, IntegrationTestLogMarker, NC,
-    RunInitConfig, RunInitConfigAndIO, TrainingResult,
     state::{ApplyMessageOutcome, DistroBroadcastAndPayload, FinishedBroadcast, RunManager},
+    Broadcast, BroadcastType, ClientTUIState, Finished, IntegrationTestLogMarker, RunInitConfig,
+    RunInitConfigAndIO, TrainingResult, NC,
 };
 use anyhow::anyhow;
-use anyhow::{Error, Result, bail};
+use anyhow::{bail, Error, Result};
 use futures::future::join_all;
 use iroh::protocol::Router;
 use psyche_coordinator::{Commitment, CommitteeSelection, Coordinator, RunState};
 use psyche_core::NodeIdentity;
 use psyche_metrics::{ClientMetrics, ClientRoleInRound, PeerConnection};
 use psyche_network::{
-    AuthenticatableIdentity, BlobTicket, DownloadComplete, DownloadRetryInfo, DownloadType,
-    EndpointId, MAX_DOWNLOAD_RETRIES, ModelRequestType, NetworkEvent, NetworkTUIState,
-    PeerManagerHandle, RetriedDownloadsHandle, SharableModel, TransmittableDownload, allowlist,
-    blob_ticket_param_request_task, raw_p2p_verify,
+    allowlist, blob_ticket_param_request_task, raw_p2p_verify, AuthenticatableIdentity, BlobTicket,
+    DownloadComplete, DownloadRetryInfo, DownloadType, EndpointId, ModelRequestType, NetworkEvent,
+    NetworkTUIState, PeerManagerHandle, RetriedDownloadsHandle, SharableModel,
+    TransmittableDownload, MAX_DOWNLOAD_RETRIES,
 };
 use psyche_watcher::{Backend, BackendWatcher};
 use tokenizers::Tokenizer;
 
 use iroh_blobs::api::Tag;
-use rand::{Rng, RngCore, seq::SliceRandom};
+use rand::{seq::SliceRandom, Rng, RngCore};
 use std::{
     collections::BTreeSet,
     marker::PhantomData,
@@ -29,7 +29,7 @@ use std::{
 };
 use tokio::{
     select,
-    sync::{Notify, mpsc, watch},
+    sync::{mpsc, watch, Notify},
     task::JoinHandle,
     time::interval,
 };
@@ -158,22 +158,24 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static, B: Backend<T> + 'sta
                         state = watcher.poll_next() => {
                             let (old_state, new_state) = state?;
                             let old_run_state = old_state
-                                .map(|s| s.run_state.to_string())
+                                .and_then(|s| s.get_run_state().ok())
+                                .map(|rs| rs.to_string())
                                 .unwrap_or_else(|| String::from(" - "));
+                            let new_run_state = new_state.get_run_state().ok();
 
-                            if old_state.map(|s| s.run_state).unwrap_or_default() != new_state.run_state {
+                            if old_state.and_then(|s| s.get_run_state().ok()) != new_run_state {
                                 info!(
                                     integration_test_log_marker = %IntegrationTestLogMarker::StateChange,
                                     client_id = %identity,
                                     old_state = old_run_state,
-                                    new_state = %new_state.run_state,
+                                    new_state = %new_run_state.map(|rs| rs.to_string()).unwrap_or_else(|| "Invalid".to_string()),
                                     epoch = new_state.progress.epoch,
                                     step = new_state.progress.step,
                                     "applying state epoch {} step {} ({} -> {})",
                                     new_state.progress.epoch,
                                     new_state.progress.step,
                                     old_run_state,
-                                    new_state.run_state
+                                    new_run_state.map(|rs| rs.to_string()).unwrap_or_else(|| "Invalid".to_string())
                                 );
                             }
 
@@ -181,7 +183,7 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static, B: Backend<T> + 'sta
                             allowlist.set(run_participating_endpoint_ids);
                             ensure_gossip_connected(new_state, &mut p2p, &mut last_gossip_connection_time);
 
-                            if old_state.map(|s| s.run_state) != Some(new_state.run_state) && new_state.run_state == RunState::RoundTrain {
+                            if old_state.and_then(|s| s.get_run_state().ok()) != new_run_state && new_run_state == Some(RunState::RoundTrain) {
                                 trace!("Updating p2p");
                                 let last_needed_step_blobs = new_state.progress.step.saturating_sub(2);
                                 if let Err(err) = p2p.remove_staled_tags(last_needed_step_blobs).await {
