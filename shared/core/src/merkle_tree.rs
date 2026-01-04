@@ -4,8 +4,9 @@ use std::fmt::Debug;
 
 use crate::sha256::sha256v;
 
-use anchor_lang::{AnchorDeserialize, AnchorSerialize, InitSpace, prelude::borsh};
+use anchor_lang::{prelude::borsh, AnchorDeserialize, AnchorSerialize, InitSpace};
 use bytemuck::Zeroable;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -166,7 +167,11 @@ impl OwnedProof {
             let rsib = pe.left_sibling.unwrap_or(candidate);
             let hash = HashWrapper::new(hash_intermediate!(lsib, rsib));
 
-            if hash == pe.target { Some(hash) } else { None }
+            if hash == pe.target {
+                Some(hash)
+            } else {
+                None
+            }
         });
         result.is_some()
     }
@@ -192,7 +197,11 @@ impl<'a> Proof<'a> {
             let rsib = pe.2.unwrap_or(&candidate);
             let hash = HashWrapper::new(hash_intermediate!(lsib, rsib));
 
-            if hash == *pe.0 { Some(hash) } else { None }
+            if hash == *pe.0 {
+                Some(hash)
+            } else {
+                None
+            }
         });
         result.is_some()
     }
@@ -217,6 +226,8 @@ impl MerkleTree {
         }
     }
 
+    const PARALLEL_THRESHOLD: usize = 2048;
+
     fn calculate_vec_capacity(leaf_count: usize) -> usize {
         // the most nodes consuming case is when n-1 is full balanced binary tree
         // then n will cause the previous tree add a left only path to the root
@@ -240,44 +251,80 @@ impl MerkleTree {
         }
     }
 
-    pub fn new<T: AsRef<[u8]>>(items: &[T]) -> Self {
+    pub fn new<T: AsRef<[u8]> + Sync>(items: &[T]) -> Self {
         let cap = MerkleTree::calculate_vec_capacity(items.len());
-        let mut mt = MerkleTree {
-            leaf_count: items.len(),
-            nodes: Vec::with_capacity(cap),
-        };
+        let mut nodes = Vec::with_capacity(cap);
 
-        for item in items {
-            let item = item.as_ref();
-            let hash = HashWrapper::new(hash_leaf!(item));
-            mt.nodes.push(hash);
+        // Process leaves
+        if items.len() < Self::PARALLEL_THRESHOLD {
+            let leaves: Vec<HashWrapper> = items
+                .iter()
+                .map(|item| {
+                    let item = item.as_ref();
+                    HashWrapper::new(hash_leaf!(item))
+                })
+                .collect();
+            nodes.extend(leaves);
+        } else {
+            let leaves: Vec<HashWrapper> = items
+                .par_iter()
+                .map(|item| {
+                    let item = item.as_ref();
+                    HashWrapper::new(hash_leaf!(item))
+                })
+                .collect();
+            nodes.extend(leaves);
         }
 
         let mut level_len = MerkleTree::next_level_len(items.len());
-        let mut level_start = items.len();
-        let mut prev_level_len = items.len();
-        let mut prev_level_start = 0;
-        while level_len > 0 {
-            for i in 0..level_len {
-                let prev_level_idx = 2 * i;
-                let lsib = &mt.nodes[prev_level_start + prev_level_idx];
-                let rsib = if prev_level_idx + 1 < prev_level_len {
-                    &mt.nodes[prev_level_start + prev_level_idx + 1]
-                } else {
-                    // Duplicate last entry if the level length is odd
-                    &mt.nodes[prev_level_start + prev_level_idx]
-                };
+        let mut level_start = 0;
+        let mut current_level_len = items.len();
 
-                let hash = HashWrapper::new(hash_intermediate!(lsib, rsib));
-                mt.nodes.push(hash);
+        while level_len > 0 {
+            // Process current level to produce next level
+            let prev_level_slice = &nodes[level_start..level_start + current_level_len];
+
+            if level_len < Self::PARALLEL_THRESHOLD {
+                let next_level: Vec<HashWrapper> = (0..level_len)
+                    .into_iter()
+                    .map(|i| {
+                        let prev_level_idx = 2 * i;
+                        let lsib = &prev_level_slice[prev_level_idx];
+                        let rsib = if prev_level_idx + 1 < current_level_len {
+                            &prev_level_slice[prev_level_idx + 1]
+                        } else {
+                            &prev_level_slice[prev_level_idx]
+                        };
+                        HashWrapper::new(hash_intermediate!(lsib, rsib))
+                    })
+                    .collect();
+                nodes.extend(next_level);
+            } else {
+                let next_level: Vec<HashWrapper> = (0..level_len)
+                    .into_par_iter()
+                    .map(|i| {
+                        let prev_level_idx = 2 * i;
+                        let lsib = &prev_level_slice[prev_level_idx];
+                        let rsib = if prev_level_idx + 1 < current_level_len {
+                            &prev_level_slice[prev_level_idx + 1]
+                        } else {
+                            &prev_level_slice[prev_level_idx]
+                        };
+                        HashWrapper::new(hash_intermediate!(lsib, rsib))
+                    })
+                    .collect();
+                nodes.extend(next_level);
             }
-            prev_level_start = level_start;
-            prev_level_len = level_len;
-            level_start += level_len;
+
+            level_start += current_level_len;
+            current_level_len = level_len;
             level_len = MerkleTree::next_level_len(level_len);
         }
 
-        mt
+        MerkleTree {
+            leaf_count: items.len(),
+            nodes,
+        }
     }
 
     pub fn get_root(&self) -> Option<&HashWrapper> {

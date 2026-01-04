@@ -23,6 +23,7 @@ data-encoding = "2.8.0"
 
 [target.'cfg(not(target_os = "solana"))'.dependencies]
 sha2.workspace = true
+rayon = { workspace = true }
 
 [features]
 rand = ["dep:rand"]
