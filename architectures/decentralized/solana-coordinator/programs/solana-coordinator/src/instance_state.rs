@@ -1,28 +1,28 @@
 use anchor_lang::prelude::*;
 use bytemuck::Pod;
 use bytemuck::Zeroable;
+use psyche_coordinator::model::HubRepo;
+use psyche_coordinator::model::Model;
 use psyche_coordinator::ClientState;
 use psyche_coordinator::Coordinator;
 use psyche_coordinator::CoordinatorConfig;
 use psyche_coordinator::CoordinatorProgress;
 use psyche_coordinator::HealthChecks;
 use psyche_coordinator::RunState;
-use psyche_coordinator::SOLANA_MAX_STRING_LEN;
 use psyche_coordinator::TickResult;
 use psyche_coordinator::Witness;
-use psyche_coordinator::model::HubRepo;
-use psyche_coordinator::model::Model;
+use psyche_coordinator::SOLANA_MAX_STRING_LEN;
+use psyche_core::sha256v;
 use psyche_core::FixedString;
 use psyche_core::SmallBoolean;
-use psyche_core::sha256v;
 use serde::Deserialize;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::ClientId;
-use crate::ProgramError;
 use crate::client::Client;
 use crate::clients_state::ClientsState;
+use crate::ClientId;
+use crate::ProgramError;
 
 #[derive(
     Debug,
@@ -85,7 +85,11 @@ impl CoordinatorInstanceState {
     }
 
     pub fn tick(&mut self) -> Result<()> {
-        let active_clients_ids = match self.coordinator.run_state {
+        let active_clients_ids = match self
+            .coordinator
+            .get_run_state()
+            .map_err(ProgramError::from)?
+        {
             RunState::WaitingForMembers => {
                 // Reset state flags
                 self.is_warmup_first_tick = SmallBoolean::from(true);
@@ -142,7 +146,7 @@ impl CoordinatorInstanceState {
                             == finished_clients[finished_client_index].id.signer
                     {
                         if finished_clients[finished_client_index].state
-                            == ClientState::Healthy
+                            == ClientState::Healthy as u8
                         {
                             client.earned += self
                                 .clients_state
@@ -157,7 +161,7 @@ impl CoordinatorInstanceState {
                             == exited_clients[exited_client_index].id.signer
                     {
                         if exited_clients[exited_client_index].state
-                            == ClientState::Ejected
+                            == ClientState::Ejected as u8
                         {
                             client.slashed += self
                                 .clients_state
@@ -188,15 +192,22 @@ impl CoordinatorInstanceState {
                 if !self.coordinator.config.check() {
                     return err!(ProgramError::ConfigSanityCheckFailed);
                 }
-                if !self.coordinator.model.check() {
+                if !self
+                    .coordinator
+                    .get_model()
+                    .map_err(ProgramError::from)?
+                    .check()
+                {
                     return err!(ProgramError::ModelSanityCheckFailed);
                 }
 
-                if self.coordinator.run_state == RunState::Uninitialized {
+                if self.coordinator.get_run_state().unwrap()
+                    == RunState::Uninitialized
+                {
                     // this is the only way to get out of RunState::Uninitialized
                     // by doing this we force the sanity checks on the config and model
                     // pass before starting the first step
-                    self.coordinator.run_state = RunState::Paused;
+                    self.coordinator.set_run_state(RunState::Paused);
                     // step 1 is the first valid step
                     self.coordinator.progress.step = 1;
                 }
@@ -282,7 +293,7 @@ impl CoordinatorInstanceState {
         model: Option<Model>,
         progress: Option<CoordinatorProgress>,
     ) -> Result<()> {
-        if self.coordinator.run_state == RunState::Finished {
+        if self.coordinator.get_run_state().unwrap() == RunState::Finished {
             return err!(ProgramError::UpdateConfigFinished);
         } else if !self.coordinator.halted()
             // these can't be updated without pausing
@@ -309,7 +320,9 @@ impl CoordinatorInstanceState {
                 return err!(ProgramError::ModelSanityCheckFailed);
             }
 
-            let _ = std::mem::replace(&mut self.coordinator.model, model);
+            self.coordinator
+                .set_model(model)
+                .map_err(|err| anchor_lang::error!(ProgramError::from(err)))?;
         }
 
         if let Some(progress) = progress {
