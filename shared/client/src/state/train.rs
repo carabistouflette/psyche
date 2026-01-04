@@ -1,13 +1,13 @@
 use crate::{
-    IntegrationTestLogMarker,
     fetch_data::{BatchIdSet, DataFetcher, TrainingDataForStep},
     state::types::{DeserializeError, PayloadState},
+    IntegrationTestLogMarker,
 };
 
-use futures::{StreamExt, future::try_join_all, stream::FuturesUnordered};
+use futures::{future::try_join_all, stream::FuturesUnordered, StreamExt};
 use psyche_coordinator::{
-    BLOOM_FALSE_RATE, Commitment, CommitteeSelection, Coordinator, CoordinatorError, HealthChecks,
-    assign_data_for_state, get_batch_ids_for_node, get_batch_ids_for_round, model,
+    assign_data_for_state, get_batch_ids_for_node, get_batch_ids_for_round, model, Commitment,
+    CommitteeSelection, Coordinator, CoordinatorError, HealthChecks, BLOOM_FALSE_RATE,
 };
 use psyche_core::{BatchId, Bloom, NodeIdentity, OptimizerDefinition};
 use psyche_modeling::{
@@ -15,22 +15,22 @@ use psyche_modeling::{
     TrainerThreadCommunicationError,
 };
 use psyche_network::{
-    AuthenticatableIdentity, Hash, SerializeDistroResultError, SerializedDistroResult,
-    TransmittableDistroResult, distro_results_to_bytes,
+    distro_results_to_bytes, AuthenticatableIdentity, Hash, SerializeDistroResultError,
+    SerializedDistroResult, TransmittableDistroResult,
 };
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
 use thiserror::Error;
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, error, info, trace, trace_span, warn};
+use tracing::{debug, error, info, trace, trace_span, warn, Instrument};
 
 use super::{
     evals::{MaybeRunningEvals, ModelTaskRunner},
@@ -275,7 +275,7 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> TrainingStepMetadata
                 let cancel_training = cancel_training.clone();
                 let write_gradients_dir = self.write_gradients_dir.clone();
                 let tx_distro_result = self.tx_distro_result.clone();
-                let quantize = match &state.model {
+                let quantize = match state.get_model().map_err(TrainError::CoordinatorError)? {
                     model::Model::LLM(llm) => match llm.optimizer {
                         OptimizerDefinition::Distro { quantize_1bit, .. } => quantize_1bit,
                         _ => false,
@@ -504,9 +504,9 @@ impl<T: NodeIdentity, A: AuthenticatableIdentity + 'static> TrainingStepMetadata
                 .witnesses
                 .len() as u16,
         );
-        let cold_start_warmup_steps = match &state.model {
+        let cold_start_warmup_steps = state.get_model().ok().map_or(0, |m| match m {
             model::Model::LLM(llm) => llm.cold_start_warmup_steps,
-        };
+        });
         let warmup_lr_between = state.get_cold_start_warmup_bounds();
         let epoch = state.progress.epoch;
 

@@ -117,7 +117,9 @@ impl App {
     }
 
     pub fn get_run_state(&self) -> RunState {
-        self.coordinator.run_state
+        self.coordinator
+            .get_run_state()
+            .unwrap_or(RunState::Uninitialized)
     }
 
     pub fn get_rounds(&self) -> [Round; 4] {
@@ -133,7 +135,7 @@ impl App {
     }
 
     pub fn get_checkpoint(&self) -> Checkpoint {
-        match self.coordinator.model {
+        match self.coordinator.get_model().unwrap() {
             Model::LLM(llm) => llm.checkpoint,
         }
     }
@@ -175,7 +177,7 @@ impl App {
 
             debug!("potentially launching data server...");
 
-            let training_data_server = match &coordinator.model {
+            let training_data_server = match coordinator.get_model().expect("Invalid model") {
                 Model::LLM(LLM {
                     data_location,
                     checkpoint,
@@ -512,7 +514,7 @@ impl App {
     }
 
     fn reset_ephemeral(coordinator: &mut Coordinator<ClientId>) {
-        coordinator.run_state = RunState::WaitingForMembers;
+        coordinator.set_run_state(RunState::WaitingForMembers);
         for elem in coordinator.epoch_state.clients.iter_mut() {
             *elem = Client::<ClientId>::default();
         }
@@ -530,7 +532,11 @@ impl App {
     }
 
     fn pause(&mut self) {
-        if let Err(err) = match self.coordinator.run_state {
+        if let Err(err) = match self
+            .coordinator
+            .get_run_state()
+            .unwrap_or(RunState::Uninitialized)
+        {
             RunState::Paused => self.coordinator.resume(Self::get_timestamp()),
             _ => self.coordinator.pause(Self::get_timestamp()),
         } {

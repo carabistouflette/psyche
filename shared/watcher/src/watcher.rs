@@ -34,7 +34,7 @@ where
     /// completes first, it is guaranteed that no state changes are missed.
     pub async fn poll_next(&mut self) -> Result<(Option<Coordinator<T>>, &Coordinator<T>)> {
         let new_state = self.backend.wait_for_new_state().await?;
-        if new_state.run_state == RunState::Warmup {
+        if new_state.get_run_state().unwrap_or(RunState::Uninitialized) == RunState::Warmup {
             self.client_lookup = HashMap::from_iter(
                 new_state
                     .epoch_state

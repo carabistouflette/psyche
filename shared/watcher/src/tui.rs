@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use psyche_coordinator::{Coordinator, RunState, model::Model};
+use psyche_coordinator::{model::Model, Coordinator, RunState};
 use psyche_core::NodeIdentity;
 use psyche_tui::ratatui::{
     buffer::Buffer,
@@ -116,7 +116,7 @@ impl Display for TuiRunState {
 
 impl<T: NodeIdentity> From<&Coordinator<T>> for TuiRunState {
     fn from(c: &Coordinator<T>) -> Self {
-        match c.run_state {
+        match c.get_run_state().unwrap_or(RunState::Uninitialized) {
             RunState::Uninitialized => TuiRunState::Uninitialized,
             RunState::Paused => TuiRunState::Paused,
             RunState::WaitingForMembers => TuiRunState::WaitingForMembers {
@@ -187,11 +187,13 @@ impl<T: NodeIdentity> From<&Coordinator<T>> for CoordinatorTuiState {
                 .iter()
                 .map(|c| format!("{:?}", c.id))
                 .collect(),
-            data_source: match &value.model {
-                Model::LLM(l) => format!("{:?}", l.data_type),
+            data_source: match value.get_model() {
+                Ok(Model::LLM(l)) => format!("{:?}", l.data_type),
+                _ => "Error".to_string(),
             },
-            model_checkpoint: match &value.model {
-                Model::LLM(l) => format!("{}", l.checkpoint),
+            model_checkpoint: match value.get_model() {
+                Ok(Model::LLM(l)) => format!("{}", l.checkpoint),
+                _ => "Error".to_string(),
             },
             exited_clients: value.epoch_state.exited_clients.len(),
             pending_pause: value.pending_pause.is_true(),
