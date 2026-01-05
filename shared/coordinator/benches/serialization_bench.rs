@@ -2,7 +2,7 @@ use anchor_lang::prelude::borsh::{BorshDeserialize, BorshSerialize};
 use anchor_lang::Space;
 use bytemuck::{Pod, Zeroable};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use psyche_coordinator::{Client, Coordinator, CoordinatorConfig, RunState};
+use psyche_coordinator::{Client, Coordinator, CoordinatorConfig, RunState, MAX_MODEL_SIZE};
 use psyche_core::{FixedString, NodeIdentity};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
@@ -71,8 +71,8 @@ impl NodeIdentity for MockClientId {
 fn create_mock_coordinator() -> Coordinator<MockClientId> {
     let mut coordinator = Coordinator {
         run_id: FixedString::from_str_truncated("benchmark_run"),
-        run_state: RunState::RoundTrain,
-        model: psyche_coordinator::model::Model::LLM(psyche_coordinator::model::LLM::dummy()),
+        run_state: RunState::RoundTrain as u8,
+        model: [0u8; MAX_MODEL_SIZE],
         config: CoordinatorConfig {
             warmup_time: 100,
             cooldown_time: 100,
@@ -94,6 +94,12 @@ fn create_mock_coordinator() -> Coordinator<MockClientId> {
         run_state_start_unix_timestamp: 123456789,
         pending_pause: Default::default(),
     };
+
+    coordinator
+        .set_model(psyche_coordinator::model::Model::LLM(
+            psyche_coordinator::model::LLM::dummy(),
+        ))
+        .unwrap();
 
     // Fill with some dummy clients to simulate 50KB payload
     // Coordinator has fixed size arrays e.g. clients: FixedVec<Client<T>, 256>
