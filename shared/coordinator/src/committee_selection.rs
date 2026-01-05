@@ -2,9 +2,7 @@ use crate::{Client, Coordinator, CoordinatorError, SOLANA_MAX_NUM_WITNESSES};
 
 use anchor_lang::{prelude::borsh, AnchorDeserialize, AnchorSerialize, InitSpace};
 use bytemuck::Zeroable;
-use psyche_core::{
-    compute_shuffled_index, sha256, sha256v, NodeIdentity, ShuffleState, SmallBoolean,
-};
+use psyche_core::{sha256, sha256v, NodeIdentity, ShuffleState, SmallBoolean};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 

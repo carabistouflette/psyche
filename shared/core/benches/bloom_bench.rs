@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use psyche_core::Bloom;
-use rand::Rng; // Keep this, but also ensure rand crate is available via extern crate if needed (2021 edition shouldn't need it)
+use psyche_core::Bloom; // Keep this, but also ensure rand crate is available via extern crate if needed (2021 edition shouldn't need it)
 
 fn bench_bloom(c: &mut Criterion) {
     let mut group = c.benchmark_group("bloom");

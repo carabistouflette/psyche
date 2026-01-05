@@ -10,7 +10,7 @@ fn merkle_tree_benchmark(c: &mut Criterion) {
     for size in [100, 1000, 10_000, 100_000].iter() {
         let count = *size;
         let input: Vec<Vec<u8>> = (0..count)
-            .map(|_| (0..32).map(|_| rng.gen()).collect())
+            .map(|_| (0..32).map(|_| rng.random()).collect())
             .collect();
 
         group.bench_with_input(BenchmarkId::new("new", count), &input, |b, input| {
@@ -21,7 +21,7 @@ fn merkle_tree_benchmark(c: &mut Criterion) {
     // Benchmark path finding (generating proofs)
     let size = 10_000;
     let input: Vec<Vec<u8>> = (0..size)
-        .map(|_| (0..32).map(|_| rng.gen()).collect())
+        .map(|_| (0..32).map(|_| rng.random()).collect())
         .collect();
     let tree = MerkleTree::new(&input);
 

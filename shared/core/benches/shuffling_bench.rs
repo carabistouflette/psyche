@@ -1,6 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use psyche_core::{compute_shuffled_index, ShuffleState};
-use rand::Rng;
 
 fn bench_shuffling(c: &mut Criterion) {
     let mut group = c.benchmark_group("shuffling");
